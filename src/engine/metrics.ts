@@ -1,0 +1,2 @@
+export function rmse(actual:number[],predicted:number[]) { if(!actual.length||actual.length!==predicted.length) throw new Error('Metrics need equally sized, non-empty arrays.'); return Math.sqrt(actual.reduce((s,y,i)=>s+(y-predicted[i])**2,0)/actual.length); }
+export function mae(actual:number[],predicted:number[]) { if(!actual.length||actual.length!==predicted.length) throw new Error('Metrics need equally sized, non-empty arrays.'); return actual.reduce((s,y,i)=>s+Math.abs(y-predicted[i]),0)/actual.length; }

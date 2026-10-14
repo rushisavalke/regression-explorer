@@ -1,0 +1,182 @@
+import cv2
+import os
+import csv
+import numpy as np
+
+# ---------------------------------------------------------
+# Settings
+# ---------------------------------------------------------
+
+IMAGE_PATH = r"C:\Users\Lenovo\Desktop\MAT Lab\extracted_frames\frame_0.jpg"
+OUTPUT_FOLDER = r"C:\Users\Lenovo\Desktop\MAT Lab\pixel_reduction"
+
+# True  -> show every step in a window and wait for a key press
+# False -> run everything without stopping
+SHOW_STEP_BY_STEP = True
+
+# Each step roughly halves the size, the last step is 16 x 16.
+# (width, height)
+STEPS = [
+    (1920, 1080),
+    (960, 540),
+    (480, 270),
+    (240, 135),
+    (120, 68),
+    (64, 36),
+    (32, 18),
+    (16, 16),
+]
+
+# ---------------------------------------------------------
+# 1. Read the original colour image
+# ---------------------------------------------------------
+
+image = cv2.imread(IMAGE_PATH)
+
+if image is None:
+    print("Error: Image not found!")
+    raise SystemExit
+
+h0, w0, c0 = image.shape
+print("Original image:", w0, "x", h0, "|", c0, "channels")
+print("Total pixels  :", w0 * h0)
+print()
+
+# ---------------------------------------------------------
+# 2. Create output folders
+# ---------------------------------------------------------
+
+folders = {
+    "color": os.path.join(OUTPUT_FOLDER, "color"),
+    "rgb": os.path.join(OUTPUT_FOLDER, "rgb_colored_channels"),
+    "mono": os.path.join(OUTPUT_FOLDER, "rgb_mono_channels"),
+}
+for path in folders.values():
+    os.makedirs(path, exist_ok=True)
+
+# ---------------------------------------------------------
+# 3. Helper functions
+# ---------------------------------------------------------
+
+def get_dimensions(img):
+    """Returns width, height, channels (mono images -> 1 channel)."""
+    if img.ndim == 2:
+        h, w = img.shape
+        return w, h, 1
+    h, w, c = img.shape
+    return w, h, c
+
+
+def split_rgb(img):
+    """OpenCV order is B, G, R. Returns coloured and mono channel images."""
+    b, g, r = cv2.split(img)
+    zeros = np.zeros_like(b)
+    red_img = cv2.merge([zeros, zeros, r])
+    green_img = cv2.merge([zeros, g, zeros])
+    blue_img = cv2.merge([b, zeros, zeros])
+    return (red_img, green_img, blue_img), (r, g, b)
+
+
+def fit_for_display(img, max_w=640, max_h=360):
+    """Scale an image to fit the screen. Small images are enlarged with
+    NEAREST so you can clearly see the individual pixels."""
+    w, h, _ = get_dimensions(img)
+    scale = min(max_w / w, max_h / h)
+    new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
+    method = cv2.INTER_NEAREST if scale > 1 else cv2.INTER_AREA
+    return cv2.resize(img, new_size, interpolation=method)
+
+
+records = []
+
+
+def save_and_report(folder_key, filename, img):
+    cv2.imwrite(os.path.join(folders[folder_key], filename), img)
+    w, h, c = get_dimensions(img)
+    records.append([filename, folder_key, w, h, c, w * h, str(img.shape)])
+    print(f"  {filename:<26} | {w:>4} x {h:<4} | Channels: {c} | Pixels: {w * h}")
+
+# ---------------------------------------------------------
+# 4. Reduce step by step
+# ---------------------------------------------------------
+
+previews = []   # small versions used for the final montage
+current = image  # each step is made from the previous step
+
+for step_no, (w, h) in enumerate(STEPS, start=1):
+
+    print(f"=== Step {step_no}: reduce to {w} x {h} ===")
+
+    # INTER_AREA is the best method for shrinking (averages pixel blocks)
+    current = cv2.resize(current, (w, h), interpolation=cv2.INTER_AREA)
+
+    (red_img, green_img, blue_img), (r, g, b) = split_rgb(current)
+
+    save_and_report("color", f"step{step_no}_image_{w}x{h}.jpg", current)
+    save_and_report("rgb", f"step{step_no}_red_{w}x{h}.jpg", red_img)
+    save_and_report("rgb", f"step{step_no}_green_{w}x{h}.jpg", green_img)
+    save_and_report("rgb", f"step{step_no}_blue_{w}x{h}.jpg", blue_img)
+    save_and_report("mono", f"step{step_no}_red_mono_{w}x{h}.jpg", r)
+    save_and_report("mono", f"step{step_no}_green_mono_{w}x{h}.jpg", g)
+    save_and_report("mono", f"step{step_no}_blue_mono_{w}x{h}.jpg", b)
+    print()
+
+    # Preview tile for the montage (128 x 128, label added)
+    tile = cv2.resize(current, (128, 128),
+                      interpolation=cv2.INTER_NEAREST if w < 128 else cv2.INTER_AREA)
+    cv2.putText(tile, f"{w}x{h}", (4, 120), cv2.FONT_HERSHEY_SIMPLEX,
+                0.45, (255, 255, 255), 1, cv2.LINE_AA)
+    previews.append(tile)
+
+    if SHOW_STEP_BY_STEP:
+        title = f"Step {step_no}: {w} x {h}  (press any key for next step)"
+        cv2.imshow(title, fit_for_display(current))
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+# ---------------------------------------------------------
+# 5. Montage of all steps and the final 16 x 16 pixel values
+# ---------------------------------------------------------
+
+montage = np.hstack(previews)
+montage_path = os.path.join(OUTPUT_FOLDER, "all_steps_montage.jpg")
+cv2.imwrite(montage_path, montage)
+
+# Final 16 x 16 image: print the actual pixel numbers (0-255)
+final_gray = cv2.cvtColor(current, cv2.COLOR_BGR2GRAY)
+np.set_printoptions(linewidth=250)
+print("Final 16 x 16 image: gray pixel values (0-255)")
+print(final_gray)
+print()
+
+# Save all pixel values of the final 16 x 16 channels as CSV files
+b16, g16, r16 = cv2.split(current)
+for name, ch in (("red", r16), ("green", g16), ("blue", b16), ("gray", final_gray)):
+    np.savetxt(os.path.join(OUTPUT_FOLDER, f"final_16x16_{name}_values.csv"),
+               ch, fmt="%d", delimiter=",")
+
+# ---------------------------------------------------------
+# 6. Save the dimensions of every image
+# ---------------------------------------------------------
+
+csv_path = os.path.join(OUTPUT_FOLDER, "image_dimensions.csv")
+with open(csv_path, "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["filename", "folder", "width", "height",
+                     "channels", "pixels", "shape"])
+    writer.writerows(records)
+
+# ---------------------------------------------------------
+# 7. Show the montage
+# ---------------------------------------------------------
+
+cv2.imshow("All steps (each tile resized to 128x128 for preview)", montage)
+cv2.waitKey(0)
+cv2.destroyAllWindows()
+
+print("-------------------------")
+print("Done!")
+print("Total images saved :", len(records))
+print("Saved in           :", OUTPUT_FOLDER)
+print("Dimensions CSV     :", csv_path)
+print("Montage            :", montage_path)
